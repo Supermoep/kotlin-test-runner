@@ -37,61 +37,51 @@ export async function activate(context: vscode.ExtensionContext) {
             const run = controller.createTestRun(request);
             const testsToRun = collectTests(request, controller);
 
-            for (const [testItem, gradleFilter] of testsToRun) {
-                run.started(testItem);
+            if (testsToRun.size === 0) {
+                run.end();
+                return;
+            }
+
+            const groupedByClass = groupTestsByClass(testsToRun);
+
+            for (const [className, testItems] of groupedByClass) {
+                testItems.forEach(([item]) => run.started(item));
 
                 try {
-                    const gradleResult = await gradleBridge.runTest(
-                        gradleFilter
-                    );
+                    const gradleFilters = testItems.map(([, filter]) => filter);
+                    const gradleResult = await gradleBridge.runTests(gradleFilters);
 
                     const testResults = await resultParser.parseResults(
                         gradleResult.xmlResultsPath
                     );
 
-                    // Case-insensitive Suche – Item-ID ist der displayName Key
-                    const searchKey = testItem.id.trim();
-                    let result = testResults.get(searchKey);
+                    for (const [testItem] of testItems) {
+                        const searchKey = testItem.id.trim();
+                        let result = testResults.get(searchKey);
 
-                    if (!result) {
-                        const lowerSearch = searchKey.toLowerCase();
-                        for (const [key, value] of testResults.entries()) {
-                            if (key.toLowerCase() === lowerSearch) {
-                                result = value;
-                                break;
+                        if (!result) {
+                            const lowerSearch = searchKey.toLowerCase();
+                            for (const [key, value] of testResults.entries()) {
+                                if (key.toLowerCase() === lowerSearch) {
+                                    result = value;
+                                    break;
+                                }
                             }
                         }
-                    }
 
-                    if (result?.passed) {
-                        run.passed(testItem, result.duration);
-                    } else if (result?.failed) {
-                        const errorText = result.errorMessage
-                            ?? 'Test fehlgeschlagen';
-                        const message = new vscode.TestMessage(errorText);
+                        if (result?.passed) {
+                            run.passed(testItem, result.duration);
+                        } else if (result?.failed) {
+                            const errorText = [
+                                result.errorMessage ?? 'Test fehlgeschlagen',
+                                '',
+                                result.errorStackTrace
+                                    ? `Stacktrace:\n${result.errorStackTrace}`
+                                    : ''
+                            ].filter(Boolean).join('\n');
 
-                        if (result.errorStackTrace) {
-                            const stackMessage = new vscode.TestMessage(
-                                `Stacktrace:\n${result.errorStackTrace}`
-                            );
-                            if (testItem.uri && result.failureLineNumber !== undefined) {
-                                const location = new vscode.Location(
-                                    testItem.uri,
-                                    new vscode.Range(
-                                        new vscode.Position(result.failureLineNumber, 0),
-                                        new vscode.Position(result.failureLineNumber, 0)
-                                    )
-                                );
-                                message.location = location;
-                                stackMessage.location = location;
-                            } else if (testItem.uri && testItem.range) {
-                                message.location = new vscode.Location(
-                                    testItem.uri,
-                                    testItem.range
-                                );
-                            }
-                            run.failed(testItem, [message, stackMessage], result.duration);
-                        } else {
+                            const message = new vscode.TestMessage(errorText);
+
                             if (testItem.uri && result.failureLineNumber !== undefined) {
                                 message.location = new vscode.Location(
                                     testItem.uri,
@@ -106,24 +96,24 @@ export async function activate(context: vscode.ExtensionContext) {
                                     testItem.range
                                 );
                             }
+
                             run.failed(testItem, message, result.duration);
-                        }
-                    } else {
-                        if (gradleResult.success) {
-                            run.passed(testItem);
                         } else {
-                            run.failed(
-                                testItem,
-                                new vscode.TestMessage(
-                                    `Kein Testergebnis gefunden.\nGradle Output:\n${gradleResult.output}`
-                                )
-                            );
+                            if (gradleResult.success) {
+                                run.passed(testItem);
+                            } else {
+                                run.failed(
+                                    testItem,
+                                    new vscode.TestMessage(
+                                        `Kein Testergebnis gefunden.\nGradle Output:\n${gradleResult.output}`
+                                    )
+                                );
+                            }
                         }
                     }
                 } catch (error) {
-                    run.errored(
-                        testItem,
-                        new vscode.TestMessage(`Fehler: ${error}`)
+                    testItems.forEach(([item]) =>
+                        run.errored(item, new vscode.TestMessage(`Fehler: ${error}`))
                     );
                 }
             }
@@ -145,8 +135,9 @@ function collectTests(
         if (item.children.size > 0) {
             item.children.forEach(child => collectItem(child));
         } else {
-            // Gradle Filter aus tag lesen – sonst item.id als Fallback
-            const gradleFilter = item.tags[0]?.id ?? item.id;
+            const gradleFilter = item.tags
+                .find(t => t.id.startsWith('gradle:'))
+                ?.id.replace('gradle:', '') ?? item.id;
             tests.set(item, gradleFilter);
         }
     };
@@ -158,6 +149,26 @@ function collectTests(
     }
 
     return tests;
+}
+
+function groupTestsByClass(
+    testsToRun: Map<vscode.TestItem, string>
+): Map<string, [vscode.TestItem, string][]> {
+    const grouped = new Map<string, [vscode.TestItem, string][]>();
+
+    for (const [testItem, gradleFilter] of testsToRun) {
+        const lastDot = gradleFilter.lastIndexOf('.');
+        const className = lastDot > 0
+            ? gradleFilter.substring(0, lastDot)
+            : gradleFilter;
+
+        if (!grouped.has(className)) {
+            grouped.set(className, []);
+        }
+        grouped.get(className)!.push([testItem, gradleFilter]);
+    }
+
+    return grouped;
 }
 
 async function loadTests(
@@ -177,16 +188,14 @@ async function loadTests(
 
         for (const method of testClass.methods) {
             const methodItem = controller.createTestItem(
-                // ID = fullyQualifiedName + displayName → matcht XML Key
                 `${testClass.fullyQualifiedName}.${method.displayName}`,
                 method.displayName,
                 vscode.Uri.file(testClass.filePath)
             );
 
-            // Gradle Filter = fullyQualifiedName + Kotlin Funktionsname
             methodItem.tags = [
                 new vscode.TestTag(
-                    `${testClass.fullyQualifiedName}.${method.name}`
+                    `gradle:${testClass.fullyQualifiedName}.${method.name}`
                 )
             ];
 

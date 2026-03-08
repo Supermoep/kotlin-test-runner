@@ -15,9 +15,6 @@ export interface TestResult {
 
 export class ResultParser {
 
-    /**
-     * Parst alle JUnit XML Ergebnisdateien aus dem Gradle Output.
-     */
     async parseResults(xmlResultsPath: string): Promise<Map<string, TestResult>> {
         const results = new Map<string, TestResult>();
 
@@ -49,13 +46,16 @@ export class ResultParser {
         }
 
         for (const testCase of testSuite.testcase) {
-            // classname steht im testcase Attribut – nicht im testsuite
             const className = testCase.$.classname;
             const methodName = testCase.$.name;
             const duration = parseFloat(testCase.$.time ?? '0') * 1000;
-            const fullyQualifiedName = `${className}.${methodName}`;
-            // Zusätzlich lowercase Key für Kotlin Backtick-Methoden
-            const lowerKey = `${className}.${methodName.toLowerCase()}`;
+
+            // () am Ende entfernen – nur vorhanden wenn kein @DisplayName
+            const cleanName = methodName.endsWith('()')
+                ? methodName.slice(0, -2)
+                : methodName;
+
+            const fullyQualifiedName = `${className}.${cleanName}`;
 
             const failed = testCase.failure !== undefined;
             const skipped = testCase.skipped !== undefined;
@@ -66,16 +66,12 @@ export class ResultParser {
             let failureFile: string | undefined;
 
             if (failed) {
-                // Fehlermeldung aus dem message Attribut
                 errorMessage = testCase.failure[0].$.message
                     ?.replace(/&lt;/g, '<')
                     ?.replace(/&gt;/g, '>');
 
-                // Stacktrace ist der Text-Inhalt des failure Elements
                 errorStackTrace = testCase.failure[0]._;
 
-                // Zeilennummer aus Stacktrace extrahieren
-                // Format: SensorDataProcessorTest.kt:36
                 const lineInfo = this.extractLineNumber(
                     errorStackTrace ?? '',
                     className
@@ -84,7 +80,7 @@ export class ResultParser {
                 failureFile = lineInfo?.fileName;
             }
 
-            const testResult: TestResult = {
+            results.set(fullyQualifiedName, {
                 passed: !failed && !skipped,
                 failed,
                 skipped,
@@ -93,35 +89,16 @@ export class ResultParser {
                 errorStackTrace,
                 failureLineNumber,
                 failureFile
-            };
-
-            results.set(fullyQualifiedName, testResult);
-
-            // Lowercase Variante als Fallback
-            if (lowerKey !== fullyQualifiedName) {
-                results.set(lowerKey, testResult);
-            }
+            });
         }
     }
 
-    /**
-     * Extrahiert Dateiname und Zeilennummer aus dem Stacktrace.
-     * 
-     * Sucht nach dem ersten Stack Frame der zur Testklasse gehört.
-     * Format: at com.automotive.sample.SensorDataProcessorTest.methodName(SensorDataProcessorTest.kt:36)
-     * 
-     * Paradigma: Regex als Mini-Parser – in C++ würdest du
-     * string::find und substr nutzen. Regex ist hier präziser
-     * und lesbarer für strukturierte Textmuster.
-     */
     private extractLineNumber(
         stackTrace: string,
         className: string
     ): { fileName: string; lineNumber: number } | null {
-        // Einfachen Klassennamen aus fully qualified Name extrahieren
         const simpleClassName = className.split('.').pop() ?? className;
 
-        // Regex sucht nach: (ClassName.kt:Zeilennummer)
         const pattern = new RegExp(
             `at[^(]+${simpleClassName}\\.([^(]+)\\(${simpleClassName}\\.kt:(\\d+)\\)`
         );
@@ -130,7 +107,7 @@ export class ResultParser {
         if (match) {
             return {
                 fileName: `${simpleClassName}.kt`,
-                lineNumber: parseInt(match[2], 10) - 1 // VSCode ist 0-basiert
+                lineNumber: parseInt(match[2], 10) - 1
             };
         }
 

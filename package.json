@@ -1,0 +1,47 @@
+{
+  "name": "kotlin-test-runner",
+  "displayName": "kotlin-test-runner",
+  "description": "Run Kotlin tests directly from VSCode",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/*.kt",
+    "onStartupFinished"
+ ], 
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "kotlin-test-runner.helloWorld",
+        "title": "Hello World"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.109.0",
+    "@types/xml2js": "^0.4.14",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.3",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
+  },
+  "dependencies": {
+    "xml2js": "^0.6.2"
+  }
+}

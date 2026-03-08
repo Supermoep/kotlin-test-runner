@@ -1,71 +1,83 @@
-# kotlin-test-runner README
+# Kotlin Test Runner
 
-This is the README for your extension "kotlin-test-runner". After writing up a brief description, we recommend including the following sections.
+A Visual Studio Code extension that integrates Kotlin test execution directly into VS Code's native Testing UI via Gradle.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+- **Automatic test discovery** — Scans `src/test/kotlin/` for classes with `@Test`-annotated methods and registers them in the VS Code Testing panel.
+- **Run tests from the UI** — Execute individual test methods, entire test classes, or all tests directly from the Testing panel without leaving the editor.
+- **Inline failure reporting** — Failed tests show error messages and stack traces inline in the editor, with navigation to the exact failing line.
+- **`@DisplayName` support** — Tests annotated with `@DisplayName` display their human-readable label in the Testing panel instead of the raw method name.
+- **Live file watching** — The test tree updates automatically whenever a `.kt` file is created, changed, or deleted.
+- **Gradle wrapper support** — Prefers `./gradlew` over a globally installed `gradle` binary.
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+- **VS Code** `1.109.0` or later
+- **JDK** installed and available on `PATH`
+- A **Gradle-based Kotlin project** with tests located under `src/test/kotlin/`
+- Either a `gradlew` wrapper in the project root or `gradle` available on `PATH`
+
+The project must follow the standard Maven/Gradle source layout:
+
+```
+<project-root>/
+└── src/
+    └── test/
+        └── kotlin/
+            └── com/example/
+                └── MyTest.kt
+```
+
+## How to Use
+
+1. Open the root folder of your Kotlin/Gradle project in VS Code.
+2. The extension activates automatically when it detects `.kt` files in the workspace.
+3. Open the **Testing** panel (beaker icon in the activity bar).
+4. The test tree is populated with all discovered test classes and methods.
+5. Click the run button next to any test, class, or the root node to execute tests.
+
+### Example Test Class
+
+```kotlin
+package com.example
+
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.DisplayName
+
+class CalculatorTest {
+
+    @Test
+    @DisplayName("should add two numbers")
+    fun add() {
+        // ...
+    }
+
+    @Test
+    fun `subtract two numbers`() {
+        // ...
+    }
+}
+```
 
 ## Extension Settings
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+This extension currently contributes no configuration settings.
 
 ## Known Issues
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+- Only the standard `src/test/kotlin/` source set is scanned. Custom test source sets are not yet supported.
+- Test discovery is regex-based. Heavily macro-generated or annotation-processor-generated test methods may not be detected.
+- The `kotlin-test-runner.helloWorld` command visible in the command palette is a leftover from the extension scaffold and has no effect.
 
 ## Release Notes
 
-Users appreciate release notes as you update your extension.
+### 0.0.1
 
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+Initial release with:
+- Kotlin test discovery via regex parsing
+- Gradle test execution with `--rerun` flag
+- JUnit XML result parsing
+- Inline failure locations in the editor
+- `@DisplayName` support
+- File system watcher for automatic test tree refresh

@@ -3,6 +3,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
+ * Configuration for a single named test source set.
+ * Corresponds to one entry in the `kotlinTestRunner.testSourceSets` setting.
+ */
+export interface SourceSetConfig {
+    /** Label shown as a group node in the Test Explorer when multiple source sets are configured. */
+    name: string;
+    /** Path to the test source directory, relative to the workspace root (e.g. `"src/test/kotlin"`). */
+    path: string;
+}
+
+/**
  * Represents a single `@Test`-annotated method discovered in a Kotlin source file.
  */
 export interface TestMethod {
@@ -30,14 +41,16 @@ export interface TestClass {
     filePath: string;
     /** All `@Test`-annotated methods found in this class. */
     methods: TestMethod[];
+    /** Name of the source set this class was discovered in (from {@link SourceSetConfig.name}). */
+    sourceSetName: string;
 }
 
 /**
  * Scans the workspace's Kotlin test sources and extracts test class and method metadata
  * using regex-based static analysis.
  *
- * The conventional test source directory `{workspaceRoot}/src/test/kotlin/` is scanned
- * recursively for `.kt` files. No Kotlin compiler or language server is invoked —
+ * Each {@link SourceSetConfig} specifies a named directory (relative to the workspace root)
+ * to scan recursively for `.kt` files. No Kotlin compiler or language server is invoked —
  * all information is extracted via regular expressions applied to the raw source text.
  */
 export class KotlinTestDiscovery {
@@ -61,22 +74,30 @@ export class KotlinTestDiscovery {
     private static readonly FUN_PATTERN = /fun\s+`?([^`(]+)`?\s*\(/;
 
     /**
-     * Discovers all Kotlin test classes in the workspace.
+     * Discovers all Kotlin test classes across the given source sets.
      *
-     * Scans all `.kt` files under `{workspaceRoot}/src/test/kotlin/`, parses each file,
-     * and returns only classes that contain at least one `@Test`-annotated method.
+     * For each {@link SourceSetConfig}, the directory `{workspaceRoot}/{sourceSet.path}` is
+     * scanned recursively for `.kt` files. Only classes that contain at least one
+     * `@Test`-annotated method are returned. Each returned {@link TestClass} carries the
+     * `sourceSetName` of the set it was discovered in.
      *
      * @param workspaceRoot - Absolute path to the workspace root directory.
+     * @param sourceSets - Named source set configurations to scan.
      * @returns A promise resolving to an array of discovered test classes.
      */
-    async discoverTests(workspaceRoot: string): Promise<TestClass[]> {
+    async discoverTests(workspaceRoot: string, sourceSets: SourceSetConfig[]): Promise<TestClass[]> {
         const testClasses: TestClass[] = [];
-        const kotlinFiles = await this.findKotlinTestFiles(workspaceRoot);
 
-        for (const filePath of kotlinFiles) {
-            const testClass = await this.parseKotlinFile(filePath);
-            if (testClass && testClass.methods.length > 0) {
-                testClasses.push(testClass);
+        for (const sourceSet of sourceSets) {
+            const absoluteDir = path.join(workspaceRoot, sourceSet.path);
+            const kotlinFiles = this.findKotlinTestFiles(absoluteDir);
+
+            for (const filePath of kotlinFiles) {
+                const testClass = await this.parseKotlinFile(filePath);
+                if (testClass && testClass.methods.length > 0) {
+                    testClass.sourceSetName = sourceSet.name;
+                    testClasses.push(testClass);
+                }
             }
         }
 
@@ -84,24 +105,22 @@ export class KotlinTestDiscovery {
     }
 
     /**
-     * Returns all `.kt` files inside `{workspaceRoot}/src/test/kotlin/`.
+     * Returns all `.kt` files inside the given absolute directory, recursively.
      *
      * Shows a VS Code warning if the directory does not exist and returns an empty array.
      *
-     * @param workspaceRoot - Absolute path to the workspace root directory.
+     * @param absoluteDir - Absolute path to the test source directory to scan.
      * @returns Absolute paths to all discovered Kotlin source files.
      */
-    private async findKotlinTestFiles(workspaceRoot: string): Promise<string[]> {
-        const testSourceDir = path.join(workspaceRoot, 'src', 'test', 'kotlin');
-
-        if (!fs.existsSync(testSourceDir)) {
+    private findKotlinTestFiles(absoluteDir: string): string[] {
+        if (!fs.existsSync(absoluteDir)) {
             vscode.window.showWarningMessage(
-                `No test source directory found: ${testSourceDir}`
+                `No test source directory found: ${absoluteDir}`
             );
             return [];
         }
 
-        return this.walkDirectory(testSourceDir, '.kt');
+        return this.walkDirectory(absoluteDir, '.kt');
     }
 
     /**
@@ -131,6 +150,7 @@ export class KotlinTestDiscovery {
      * Parses a single Kotlin source file and extracts its test class metadata.
      *
      * Returns `null` if the file does not contain a class declaration.
+     * The `sourceSetName` field is left as an empty string and must be set by the caller.
      * Methods are extracted via {@link extractTestMethods}.
      *
      * @param filePath - Absolute path to the `.kt` file to parse.
@@ -160,7 +180,8 @@ export class KotlinTestDiscovery {
             packageName,
             fullyQualifiedName,
             filePath,
-            methods
+            methods,
+            sourceSetName: ''
         };
     }
 

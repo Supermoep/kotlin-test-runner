@@ -48,7 +48,7 @@ The extension is a VS Code **Testing API** integration. It bridges three concern
               │              │              │
               ▼              ▼              ▼
         .kt files      ./gradlew        TEST-*.xml
-    (src/test/kotlin)  (child_process)  (build/test-results/test)
+  (configured paths)  (child_process)  (build/test-results/test)
 ```
 
 The three core components have **no dependency on each other** — they are all independently instantiated and composed exclusively in `extension.ts`. This makes them independently testable.
@@ -65,6 +65,7 @@ The three core components have **no dependency on each other** — they are all 
 - Register the `TestController` with VS Code.
 - Trigger initial test discovery on activation.
 - Set up a `FileSystemWatcher` to re-discover tests when `.kt` files change.
+- Listen for `onDidChangeConfiguration` to reload the test tree when source set settings change.
 - Register the `Run` test profile which defines what happens when the user clicks a run button.
 - Translate between VS Code's `TestItem` model and the Gradle filter syntax.
 
@@ -73,7 +74,9 @@ The three core components have **no dependency on each other** — they are all 
 | Function | Description |
 |---|---|
 | `activate(context)` | Extension entry point. Initialises all components, loads tests, registers run handler. |
-| `loadTests(controller, discovery, workspaceRoot)` | Clears the current item tree and rebuilds it from discovered test classes. |
+| `getSourceSets()` | Reads `kotlinTestRunner.testSourceSets` from VS Code settings; applies the built-in default when the setting is absent or empty. |
+| `loadTests(controller, discovery, workspaceRoot, sourceSets)` | Clears the current item tree and rebuilds it. Adds a source-set group layer when 2+ sets are configured. |
+| `buildClassItem(controller, testClass)` | Creates a parent `TestItem` for a test class with all method children attached. |
 | `collectTests(request, controller)` | Recursively traverses the `TestItem` tree and returns a flat map of `TestItem → gradleFilter`. |
 | `groupTestsByClass(testsToRun)` | Groups the flat map by fully-qualified class name for batch Gradle execution. |
 
@@ -95,7 +98,7 @@ TestItem.id  ──►  exact lookup in result Map
 
 **Role:** Static analysis of Kotlin source files to discover test classes and methods.
 
-**Source directory convention:** Always scans `{workspaceRoot}/src/test/kotlin/`.
+**Source directories:** Determined by the `kotlinTestRunner.testSourceSets` setting. Each entry provides a name and a path relative to the workspace root. The discovery class receives a resolved `SourceSetConfig[]` from `extension.ts` and scans each configured directory independently.
 
 **Parsing strategy:** Pure regex-based line scanning — no Kotlin parser or compiler is invoked. This is fast and requires no additional tooling, but is limited to statically detectable patterns.
 
@@ -130,6 +133,11 @@ fun myTest() {}
 **Interfaces:**
 
 ```typescript
+interface SourceSetConfig {
+    name: string;  // Label shown in Test Explorer
+    path: string;  // Relative path from workspace root (e.g. "src/test/kotlin")
+}
+
 interface TestMethod {
     name: string;         // Raw Kotlin function name (used for Gradle filter)
     displayName: string;  // @DisplayName value, or falls back to name
@@ -143,6 +151,7 @@ interface TestClass {
     fullyQualifiedName: string; // e.g. "com.example.CalculatorTest"
     filePath: string;
     methods: TestMethod[];
+    sourceSetName: string;      // Name of the source set this class was found in
 }
 ```
 
@@ -262,6 +271,8 @@ interface TestResult {
 
 ### TestItem tree structure in VS Code
 
+**Single source set (flat — source set group node is omitted):**
+
 ```
 TestController.items
 └── TestItem (id = "com.example.CalculatorTest", label = "CalculatorTest")
@@ -277,7 +288,21 @@ TestController.items
         range = Range(line 18, 0, line 18, 0)
 ```
 
-**Key distinction:** The `id` uses the `displayName` (for stable, human-readable identity in the VS Code UI), while the `gradle:` tag stores the raw Kotlin function name (required for the Gradle `--tests` filter).
+**Multiple source sets (source set group nodes at root):**
+
+```
+TestController.items
+├── TestItem (id = "source-set:Unit Tests", label = "Unit Tests")          ← group node
+│   └── TestItem (id = "com.example.CalculatorTest", label = "CalculatorTest")
+│       └── TestItem (id = "com.example.CalculatorTest.add", ...)
+└── TestItem (id = "source-set:Integration Tests", label = "Integration Tests")  ← group node
+    └── TestItem (id = "com.example.IntegrationTest", label = "IntegrationTest")
+        └── TestItem (id = "com.example.IntegrationTest.should run end to end", ...)
+```
+
+Group nodes (`source-set:*`) carry no `gradle:` tags and always have children, so `collectTests` naturally traverses through them without treating them as executable tests.
+
+**Key distinction:** Method `TestItem.id` uses the `displayName` for a stable, human-readable identity in the VS Code UI, while the `gradle:` tag stores the raw Kotlin function name required for the Gradle `--tests` filter.
 
 ### Naming convention table
 
@@ -297,14 +322,21 @@ TestController.items
 Extension Activation
         │
         ▼
-KotlinTestDiscovery.discoverTests(workspaceRoot)
-  └─► scans src/test/kotlin/**/*.kt
+getSourceSets()  — reads kotlinTestRunner.testSourceSets config
+  └─► returns SourceSetConfig[]  (default: [{ name: "Tests", path: "src/test/kotlin" }])
+        │
+        ▼
+KotlinTestDiscovery.discoverTests(workspaceRoot, sourceSets)
+  └─► for each source set: scans {workspaceRoot}/{sourceSet.path}/**/*.kt
+  └─► tags each TestClass with its sourceSetName
   └─► returns TestClass[]
         │
         ▼
 loadTests() — builds VS Code TestItem tree
-  └─► parent item per TestClass (id = FQN)
-  └─► child item per TestMethod
+  ├─► single source set  →  flat: classes at controller root
+  └─► multiple sets      →  grouped: source-set group node per set, classes as children
+        │
+        per class / per method:
         ├─► id    = FQN + "." + displayName
         ├─► tags  = ["gradle:FQN.methodName"]
         └─► range = method declaration line
@@ -314,7 +346,7 @@ User clicks "Run" in Testing panel
         │
         ▼
 collectTests(request, controller)
-  └─► recursively collects leaf TestItems
+  └─► recursively collects leaf TestItems (skips group nodes naturally)
   └─► returns Map<TestItem, gradleFilter>
         │
         ▼
@@ -368,16 +400,23 @@ Any change to any `.kt` file causes a complete re-discovery pass. This is simple
 ### Case-insensitive result matching
 After the primary exact-match lookup of `TestItem.id` in the result map, a case-insensitive fallback is performed. This guards against potential casing discrepancies between the VS Code item id and the fully-qualified name as reported in the Gradle XML output.
 
+### Configurable source sets with named grouping
+Test source directories are declared in `kotlinTestRunner.testSourceSets`. Each entry carries a `name` (used for UI labelling) and a `path` (scanned directory). A built-in default (`src/test/kotlin`) ensures the extension works without any explicit configuration.
+
+When two or more source sets are present, `loadTests` introduces an extra layer of group `TestItem`s (id prefix `source-set:`) at the controller root. With a single source set, this layer is omitted to keep the tree flat — consistent with how VS Code's built-in test runners behave. The decision of flat vs. grouped is made purely by comparing `sourceSets.length`, requiring no additional configuration.
+
+### Configuration change listener
+`vscode.workspace.onDidChangeConfiguration` is connected to `loadTests` so the test tree reflects setting changes immediately, without requiring the user to reload the VS Code window.
+
 ---
 
 ## Known Limitations
 
 | Limitation | Impact |
 |---|---|
-| Only `src/test/kotlin/` is scanned | Custom test source sets (e.g. `integrationTest`) are not discovered |
 | Regex-based parsing | Annotation-processor-generated tests or class/method names with complex formatting may not parse correctly |
-| Single test source directory | Multi-module Gradle projects are not supported; only the root module's tests are discovered |
-| XML results path is hardcoded | Only the default `test` task output is read; results from custom tasks are not accessible |
+| Single Gradle project | Multi-module Gradle projects are not supported; only the root module's tests are discovered and executed |
+| XML results path is hardcoded | Only the default `test` task output is read; results from custom tasks or non-standard source sets are not accessible |
 | No debug profile | Only a `Run` profile is registered; breakpoint debugging is not supported |
 | No coverage profile | Running tests with coverage instrumentation is not supported |
 | Empty extension test suite | `src/test/extension.test.ts` contains no tests for the extension itself |

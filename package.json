@@ -15,12 +15,32 @@
  ], 
   "main": "./out/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "kotlin-test-runner.helloWorld",
-        "title": "Hello World"
+    "configuration": {
+      "title": "Kotlin Test Runner",
+      "properties": {
+        "kotlinTestRunner.testSourceSets": {
+          "type": "array",
+          "default": [
+            { "name": "Tests", "path": "src/test/kotlin" }
+          ],
+          "description": "Named test source directories to scan for @Test-annotated methods. Paths are relative to the workspace root.",
+          "items": {
+            "type": "object",
+            "required": ["name", "path"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Label shown as a group node in the Test Explorer when multiple source sets are configured."
+              },
+              "path": {
+                "type": "string",
+                "description": "Path to the test source directory, relative to the workspace root (e.g. \"src/test/kotlin\")."
+              }
+            }
+          }
+        }
       }
-    ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

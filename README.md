@@ -62,7 +62,48 @@ class CalculatorTest {
 
 ## Extension Settings
 
-This extension currently contributes no configuration settings.
+This extension contributes the following settings, configurable in VS Code's Settings UI or `settings.json`:
+
+### `kotlinTestRunner.testSourceSets`
+
+An array of named test source directories to scan for `@Test`-annotated methods.
+Each entry has two required fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | Label shown in the Test Explorer (used as a group node when multiple sets exist). |
+| `path` | `string` | Path to the source directory, relative to the workspace root. |
+
+**Default:**
+```json
+"kotlinTestRunner.testSourceSets": [
+  { "name": "Tests", "path": "src/test/kotlin" }
+]
+```
+
+**Multi-source-set example:**
+```json
+"kotlinTestRunner.testSourceSets": [
+  { "name": "Unit Tests",        "path": "src/test/kotlin" },
+  { "name": "Integration Tests", "path": "src/integrationTest/kotlin" }
+]
+```
+
+With multiple source sets the Test Explorer tree gains an extra grouping level:
+
+```
+Kotlin Test Runner
+├── Unit Tests
+│   └── com.example.CalculatorTest
+│       └── should add two numbers
+└── Integration Tests
+    └── com.example.IntegrationTest
+        └── should run end to end
+```
+
+With a single source set the group node is omitted and classes appear at the root (flat tree).
+
+The test tree automatically reloads when this setting is changed in VS Code settings — no window reload is required.
 
 ## Known Issues
 

@@ -2,9 +2,10 @@
   "name": "kotlin-test-runner",
   "displayName": "kotlin-test-runner",
   "description": "Run Kotlin tests directly from VSCode",
-  "version": "0.0.1",
+  "publisher": "sebastianmoeller",
+  "version": "0.0.3",
   "engines": {
-    "vscode": "^1.109.0"
+    "vscode": ">=1.105.0"
   },
   "categories": [
     "Other"

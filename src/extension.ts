@@ -73,12 +73,28 @@ export async function activate(context: vscode.ExtensionContext) {
             // avoiding repeated JVM startup overhead.
             const groupedByClass = groupTestsByClass(testsToRun);
 
-            for (const [className, testItems] of groupedByClass) {
+            let wasCancelled = false;
+
+            for (const [, testItems] of groupedByClass) {
+                // If a previous group was cancelled, skip all remaining test items.
+                if (wasCancelled || token.isCancellationRequested) {
+                    testItems.forEach(([item]) => run.skipped(item));
+                    continue;
+                }
+
                 testItems.forEach(([item]) => run.started(item));
 
                 try {
                     const gradleFilters = testItems.map(([, filter]) => filter);
-                    const gradleResult = await gradleBridge.runTests(gradleFilters);
+                    const gradleResult = await gradleBridge.runTests(gradleFilters, token);
+
+                    // If the run was cancelled while Gradle was executing, skip all items
+                    // in this group and stop processing further groups.
+                    if (gradleResult.cancelled) {
+                        wasCancelled = true;
+                        testItems.forEach(([item]) => run.skipped(item));
+                        continue;
+                    }
 
                     const testResults = await resultParser.parseResults(
                         gradleResult.xmlResultsPath

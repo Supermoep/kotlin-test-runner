@@ -6,6 +6,7 @@ A Visual Studio Code extension that integrates Kotlin test execution directly in
 
 - **Automatic test discovery** — Scans `src/test/kotlin/` for classes with `@Test`-annotated methods and registers them in the VS Code Testing panel.
 - **Run tests from the UI** — Execute individual test methods, entire test classes, or all tests directly from the Testing panel without leaving the editor.
+- **Cancellable test runs** — Click the stop button in the Testing panel to immediately kill the Gradle process. In-progress tests are marked as skipped.
 - **Inline failure reporting** — Failed tests show error messages and stack traces inline in the editor, with navigation to the exact failing line.
 - **`@DisplayName` support** — Tests annotated with `@DisplayName` display their human-readable label in the Testing panel instead of the raw method name.
 - **Live file watching** — The test tree updates automatically whenever a `.kt` file is created, changed, or deleted.

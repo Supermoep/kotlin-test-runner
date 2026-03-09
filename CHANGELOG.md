@@ -6,4 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Added
+- Cancellation support: clicking the stop button in the Testing panel now kills the running Gradle process immediately. All in-progress test items are marked as skipped.
+
 - Initial release

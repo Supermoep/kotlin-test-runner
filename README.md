@@ -107,9 +107,7 @@ The test tree automatically reloads when this setting is changed in VS Code sett
 
 ## Known Issues
 
-- Only the standard `src/test/kotlin/` source set is scanned. Custom test source sets are not yet supported.
 - Test discovery is regex-based. Heavily macro-generated or annotation-processor-generated test methods may not be detected.
-- The `kotlin-test-runner.helloWorld` command visible in the command palette is a leftover from the extension scaffold and has no effect.
 
 ## Release Notes
 

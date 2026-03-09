@@ -14,6 +14,11 @@ export interface GradleTestResult {
     output: string;
     /** Absolute path to the directory containing JUnit XML result files. */
     xmlResultsPath: string;
+    /**
+     * `true` when the run was stopped by the user before Gradle could finish.
+     * In this case `success` is `false` and test results are unavailable.
+     */
+    cancelled?: boolean;
 }
 
 /**
@@ -52,10 +57,12 @@ export class GradleBridge {
      * Executes: `./gradlew test --rerun --tests "{fullyQualifiedName}"`
      *
      * @param fullyQualifiedName - Fully-qualified test filter, e.g. `"com.example.MyTest.myMethod"`.
+     * @param token - Optional VS Code cancellation token. When fired, the Gradle process is killed
+     *   and the returned promise resolves with `cancelled: true`.
      * @returns A promise resolving to the Gradle execution result.
      */
-    async runTest(fullyQualifiedName: string): Promise<GradleTestResult> {
-        return this.executeGradle(`test --rerun --tests "${fullyQualifiedName}"`);
+    async runTest(fullyQualifiedName: string, token?: vscode.CancellationToken): Promise<GradleTestResult> {
+        return this.executeGradle(`test --rerun --tests "${fullyQualifiedName}"`, token);
     }
 
     /**
@@ -66,9 +73,11 @@ export class GradleBridge {
      * Returns a successful no-op result immediately if the list is empty.
      *
      * @param fullyQualifiedNames - Array of fully-qualified test filter strings.
+     * @param token - Optional VS Code cancellation token. When fired, the Gradle process is killed
+     *   and the returned promise resolves with `cancelled: true`.
      * @returns A promise resolving to the Gradle execution result.
      */
-    async runTests(fullyQualifiedNames: string[]): Promise<GradleTestResult> {
+    async runTests(fullyQualifiedNames: string[], token?: vscode.CancellationToken): Promise<GradleTestResult> {
         if (fullyQualifiedNames.length === 0) {
             return { success: true, output: '', xmlResultsPath: '' };
         }
@@ -77,7 +86,7 @@ export class GradleBridge {
             .map(name => `--tests "${name}"`)
             .join(' ');
 
-        return this.executeGradle(`test --rerun ${filters}`);
+        return this.executeGradle(`test --rerun ${filters}`, token);
     }
 
     /**
@@ -86,10 +95,12 @@ export class GradleBridge {
      * The `cleanTest` task removes the previous test results, ensuring all tests
      * are re-executed regardless of Gradle's up-to-date checks.
      *
+     * @param token - Optional VS Code cancellation token. When fired, the Gradle process is killed
+     *   and the returned promise resolves with `cancelled: true`.
      * @returns A promise resolving to the Gradle execution result.
      */
-    async runAllTests(): Promise<GradleTestResult> {
-        return this.executeGradle('cleanTest test');
+    async runAllTests(token?: vscode.CancellationToken): Promise<GradleTestResult> {
+        return this.executeGradle('cleanTest test', token);
     }
 
     /**
@@ -101,18 +112,31 @@ export class GradleBridge {
      * The XML results path is always set to `{workspaceRoot}/build/test-results/test`,
      * regardless of which specific tests were executed.
      *
+     * If the optional `token` fires before the process exits, the child process is
+     * killed immediately and the promise resolves with `{ success: false, cancelled: true }`.
+     *
      * @param args - Gradle arguments appended after the `gradlew` / `gradle` binary name.
+     * @param token - Optional VS Code cancellation token.
      * @returns A promise resolving to the execution result.
      */
-    private executeGradle(args: string): Promise<GradleTestResult> {
-        return new Promise((resolve, reject) => {
+    private executeGradle(args: string, token?: vscode.CancellationToken): Promise<GradleTestResult> {
+        return new Promise((resolve) => {
             const gradleCmd = this.getGradleCommand();
             const command = `${gradleCmd} ${args}`;
+
+            const xmlResultsPath = path.join(
+                this.workspaceRoot,
+                'build',
+                'test-results',
+                'test'
+            );
 
             this.outputChannel.clear();
             this.outputChannel.show(true);
             this.outputChannel.appendLine(`▶ Running: ${command}`);
             this.outputChannel.appendLine('─'.repeat(60));
+
+            let cancelled = false;
 
             const childProcess = cp.exec(
                 command,
@@ -126,12 +150,10 @@ export class GradleBridge {
                         this.outputChannel.appendLine(stderr);
                     }
 
-                    const xmlResultsPath = path.join(
-                        this.workspaceRoot,
-                        'build',
-                        'test-results',
-                        'test'
-                    );
+                    if (cancelled) {
+                        // Already resolved via the cancellation handler — do nothing.
+                        return;
+                    }
 
                     resolve({
                         success: error === null,
@@ -143,6 +165,18 @@ export class GradleBridge {
 
             childProcess.stdout?.on('data', (data) => {
                 this.outputChannel.append(data);
+            });
+
+            token?.onCancellationRequested(() => {
+                cancelled = true;
+                childProcess.kill();
+                this.outputChannel.appendLine('\n⚠ Test run cancelled.');
+                resolve({
+                    success: false,
+                    output: 'Test run was cancelled.',
+                    xmlResultsPath,
+                    cancelled: true
+                });
             });
         });
     }

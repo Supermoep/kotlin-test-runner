@@ -163,6 +163,8 @@ interface TestClass {
 
 **Execution:** Uses Node.js `child_process.exec` with the workspace root as the working directory and inherits the full shell environment (`process.env`).
 
+**Cancellation:** All public execution methods accept an optional `vscode.CancellationToken`. When the token fires (user clicks the stop button), the spawned child process is killed immediately via `childProcess.kill()`. The promise resolves with `{ success: false, cancelled: true }` and any in-progress test items are marked as `skipped` by the run handler in `extension.ts`.
+
 **Gradle command selection:**
 
 ```
@@ -200,9 +202,10 @@ The `--rerun` flag forces Gradle to re-execute the task even if its inputs have 
 
 ```typescript
 interface GradleTestResult {
-    success: boolean;      // true when Gradle exits with code 0
-    output: string;        // captured stdout
+    success: boolean;       // true when Gradle exits with code 0
+    output: string;         // captured stdout
     xmlResultsPath: string; // absolute path to the XML results directory
+    cancelled?: boolean;    // true when the run was stopped by the user
 }
 ```
 
@@ -356,9 +359,13 @@ groupTestsByClass(testsToRun)
         │
         ▼
 For each class group:
-  GradleBridge.runTests(filters[])
+  GradleBridge.runTests(filters[], token)
     └─► ./gradlew test --rerun --tests "..." ...
+    └─► token.onCancellationRequested → childProcess.kill() → cancelled: true
     └─► returns GradleTestResult
+        │
+        ▼
+  If cancelled: mark all items as skipped, skip remaining groups
         │
         ▼
   ResultParser.parseResults(xmlResultsPath)
@@ -378,6 +385,9 @@ For each class group:
 ---
 
 ## Key Design Decisions
+
+### Cancellation support
+When the user clicks the stop button in the Testing panel, VS Code fires the `CancellationToken` passed to the run profile handler. The token is forwarded to `GradleBridge.executeGradle()`, which registers a `token.onCancellationRequested` listener. When the listener fires, the running Gradle child process is killed immediately (`childProcess.kill()`). The promise resolves with `cancelled: true` so the run handler can mark all in-progress test items as `skipped` and abort any remaining class groups.
 
 ### Separation of concerns
 Discovery, execution, and result parsing are three independent classes with no direct dependencies. `extension.ts` is the only integration point.
